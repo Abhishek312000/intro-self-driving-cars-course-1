@@ -103,8 +103,6 @@ class Controller2D(object):
         steer_output    = 0
         brake_output    = 0
       
-        print(f"x={x}; y={y}; yaw={yaw}; v={v}; v_desired={v_desired}")
-
         ######################################################
         ######################################################
         # MODULE 7: DECLARE USAGE VARIABLES HERE
@@ -126,6 +124,7 @@ class Controller2D(object):
             throttle_output = 0.5 * self.vars.v_previous
         """
         self.vars.create_var('t_previous', 0.0)
+        self.vars.create_var('steady_state_yaw', 0.0)
         
         self.vars.create_var('v_last_error', 0.0)
         self.vars.create_var('v_cumulative_error', 0.0)
@@ -164,6 +163,8 @@ class Controller2D(object):
                     brake_output    : Brake output (0 to 1)
             """
 
+            print(f"x={x}; y={y}; yaw={yaw}; v={v}; v_desired={v_desired}")
+                
             ######################################################
             ######################################################
             # MODULE 7: IMPLEMENTATION OF LONGITUDINAL CONTROLLER HERE
@@ -175,7 +176,7 @@ class Controller2D(object):
             self.vars.v_cumulative_error += v_error
 
             Kp = 0.8
-            Ki = 0.2
+            Ki = 0.5
             Kd = 0.1
             P = Kp * v_error
             I = Ki * self.vars.v_cumulative_error * t_delta
@@ -197,36 +198,53 @@ class Controller2D(object):
             ######################################################
             if self._target_waypoint_idx != -1:
                 previous_waypoint = self._waypoints[self._target_waypoint_idx - 1]
-                target_waypoint = self._waypoints[self._target_waypoint_idx]
+                target_waypoint = self._waypoints[len(self._waypoints) - 1]
                 
-                # calculate crosstrack error
-                previous_waypoint_dist = np.linalg.norm(np.array([
-                        previous_waypoint[0] - x,
-                        previous_waypoint[1] - y]))
-                target_waypoint_dist = self._target_waypoint_dist
-                waypoints_dist = np.linalg.norm(np.array([
-                        target_waypoint[0] - previous_waypoint[0],
-                        target_waypoint[1] - previous_waypoint[1]]))
-                p = (previous_waypoint_dist + target_waypoint_dist + waypoints_dist) * 0.5
-                crosstrack_error = 2 * np.sqrt(p * (p - waypoints_dist) * (p - target_waypoint_dist) * (p - previous_waypoint_dist)) / waypoints_dist
-                
-                # angle between trajectory and heading
-                psi = np.arctan((target_waypoint[1] - previous_waypoint[1]) / (target_waypoint[0] - previous_waypoint[1])) - yaw
-                
-                k_gain = 1
-                k_soft = 0
-                #steer_output = psi + np.arctan(k_gain * crosstrack_error / (k_soft + v))
+                # mov position to front axis
+                # L = 4.613 * 0.25
+                # x += L * np.cos(yaw)
+                # y += L * np.sin(yaw)
 
-                print(f"    error={crosstrack_error}; psi={psi}; steer={steer_output}")
+                # calculate crosstrack error
+                previous_point = np.array(previous_waypoint[:2])
+                target_point = np.array(target_waypoint[:2])
+                current_point = np.array([x, y])
+
+                print(f"    Points: prev={previous_point}; current={current_point}; target={target_point};")
+
+                previos_to_current = current_point - previous_point
+                previos_to_target = target_point - previous_point
+
+                previos_to_current_dist = np.linalg.norm(previos_to_current)
+                previos_to_targer_dist = np.linalg.norm(previos_to_target)
+
+                vector_angle_cos = np.dot(previos_to_current, previos_to_target) / previos_to_current_dist / previos_to_targer_dist
+                vector_angle_sin = np.sqrt(1 - vector_angle_cos * vector_angle_cos)
+
+                crosstrack_error = vector_angle_sin * previos_to_current_dist
+                
+                # calculate heading error
+                trajectory_angle = np.arctan((target_waypoint[1] - previous_waypoint[1]) / (target_waypoint[0] - previous_waypoint[0]))
+                heading_error = yaw - trajectory_angle
+
+                k_gain = 1
+                k_soft = 1
+                crosstrack_regulator = np.arctan(k_gain * crosstrack_error / (k_soft + v))
+                steer_output = heading_error + crosstrack_regulator
+                
+                print(f" - error={crosstrack_error}; cross_regulator={crosstrack_regulator}; heading_error={heading_error}; heading={yaw} trajectory_angle={trajectory_angle}; steer={steer_output}")
             else:
                 steer_output = 0
 
+            
             ######################################################
             # SET CONTROLS OUTPUT
             ######################################################
             self.set_throttle(throttle_output)  # in percent (0 to 1)
             self.set_steer(steer_output)        # in rad (-1.22 to 1.22)
             self.set_brake(brake_output)        # in percent (0 to 1)
+        else:
+            self.vars.steady_state_yaw = yaw
 
         ######################################################
         ######################################################
